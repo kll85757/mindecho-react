@@ -11,6 +11,7 @@ const environment: Environment = (import.meta.env.VITE_APP_ENV as Environment) |
 const baseUrl = (() => {
   switch (environment) {
     case Environment.dev:
+      // return 'http://172.16.3.130:7000/api'
       return 'http://182.92.107.224:7001/api'
     case Environment.test:
       return 'http://test-api.mindecho.com/api'

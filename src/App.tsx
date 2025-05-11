@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+// App.tsx
+import { useEffect, Suspense, lazy } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
-import { Suspense, lazy } from 'react'
 import service from './utils/request'
 import './styles/global.less'
 
@@ -10,27 +10,44 @@ const NotFound = lazy(() => import('./pages/NotFound'))
 const ArticleDetail = lazy(() => import('./pages/ArticleDetail'))
 const Chat = lazy(() => import('./pages/Chat'))
 
-function App() {
-  useEffect(() => {
-    const guestLogin = async () => {
-      try {
-        const response = await service.post('/auth/loginByGuest', {
-          guest: '5555',
-          userProfileId: '1911061390466269185',
-        })
-        if (response && response.data && response.data.token) {
-          localStorage.setItem('token', response.data.token)
-        }
-      } catch (error) {
-        console.error('Guest login failed:', error)
-      }
+// 全局唯一的 guest 标识
+const uuid = Math.random() + Date.now()
+
+// 模块级标志，保证 guestLogin 只执行一次
+let hasLoggedIn = false
+
+async function guestLogin() {
+  try {
+    const response = await service.post('/auth/loginByGuest', {
+      guest: `${uuid}`,
+      userProfileId: '1905822448827469825',
+    })
+    if (response?.data?.token) {
+      // 如果需要用到 token，保留下面一行；否则可删
+      localStorage.setItem('token', response.data.token)
     }
-    guestLogin()
+  } catch (error) {
+    console.error('Guest login failed:', error)
+  }
+}
+
+export default function App() {
+  useEffect(() => {
+    if (!hasLoggedIn) {
+      hasLoggedIn = true
+      guestLogin()
+    }
   }, [])
 
   return (
     <BrowserRouter>
-      <Suspense fallback={<div className="flex-center" style={{ height: '100vh' }}>Loading...</div>}>
+      <Suspense
+        fallback={
+          <div className="flex-center" style={{ height: '100vh' }}>
+            Loading...
+          </div>
+        }
+      >
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/article" element={<ArticleDetail />} />
@@ -41,5 +58,3 @@ function App() {
     </BrowserRouter>
   )
 }
-
-export default App
