@@ -11,14 +11,20 @@ const environment: Environment = (import.meta.env.VITE_APP_ENV as Environment) |
 const baseUrl = (() => {
   switch (environment) {
     case Environment.dev:
-      // return 'http://172.16.3.130:7000/api'
-      return 'http://182.92.107.224:7001/api'
+      // 开发环境使用HTTPS
+      return 'https://szrs.shikongai.com:7001/api'
+
     case Environment.test:
-      return 'http://test-api.mindecho.com/api'
+      // 测试环境使用HTTPS
+      return 'https://szrs.shikongai.com:7001/api'
+
     case Environment.prod:
-      return 'https://api.mindecho.com/api'
+      // 生产环境使用HTTPS
+      return 'https://szrs.shikongai.com:7001/api'
+
     default:
-      return 'http://182.92.107.224:7000'
+      // 默认情况下使用HTTPS
+      return 'https://szrs.shikongai.com:7001/api'
   }
 })()
 
@@ -53,14 +59,19 @@ service.interceptors.response.use(
     if (data.code === 200) {
       return data.data
     }
+    console.error('API响应错误:', data.message || '请求失败', data)
     return Promise.reject(new Error(data.message || '请求失败'))
   },
   (error) => {
     // 这里可以处理 401、403 等错误
+    console.error('API请求异常:', error)
+    
     if (error.response?.status === 401) {
-      // 处理未授权的情况
+      // 处理未授权的情况，但不跳转到不存在的路由
       localStorage.removeItem('token')
-      window.location.href = '/login'
+      // 只有在存在/login路由时才跳转
+      // window.location.href = '/login'
+      console.error('未授权访问，已清除token')
     }
     return Promise.reject(error)
   }

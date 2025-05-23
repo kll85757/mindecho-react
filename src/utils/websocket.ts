@@ -8,17 +8,37 @@ class WebSocketService {
   private socket: WebSocket | null = null;
   private callbacks: Map<string, Set<MessageCallback>> = new Map();
   private heartbeatIntervalId: number | null = null;
+  private reconnectTimeoutId: number | null = null;
   private readonly heartbeatInterval = 30_000; // 30 s 心跳间隔
+  private readonly reconnectInterval = 5_000; // 5 s 重连间隔
+  private readonly maxReconnectAttempts = 5; // 最大重连次数
+  private reconnectAttempts = 0;
   private readonly employeeId = '10002';
+  private isConnecting = false;
 
   // 从 URL 拿到的用户 ID 和 openWords
   private userId: string = '';
   private openWords: string = '';
+  private manualUrl: string = ''; // 存储手动设置的WebSocket URL
+
+  /**
+   * 设置完整的WebSocket URL
+   * @param url 完整的WebSocket URL
+   */
+  public setWebSocketUrl(url: string): void {
+    this.manualUrl = url;
+  }
 
   /**
    * 构建携带 token 的 WS 地址，并解析 userProfileId & openWords
    */
   private buildUrl(): string {
+    // 如果已手动设置了URL，则优先使用
+    if (this.manualUrl) {
+      console.log('Using manually set WebSocket URL:', this.manualUrl);
+      return this.manualUrl;
+    }
+
     const params = new URLSearchParams(window.location.search);
 
     // 1. 提取 token
@@ -39,17 +59,34 @@ class WebSocketService {
     this.openWords = params.get('openWords') || '';
 
     // 3. 根据协议决定 ws 或 wss
-    const base =
-      window.location.protocol === 'https:'
-        ? 'wss://182.92.107.224:7001/api/ws'
-        : 'ws://182.92.107.224:7001/api/ws';
+    let base = '';
+    // 从环境变量获取当前环境
+    const environment = import.meta.env.VITE_APP_ENV || 'dev';
+    
+    if (environment === 'dev') {
+      // 开发环境也使用WSS
+      base = 'wss://szrs.shikongai.com:7001/api/ws';
+    } else if (environment === 'test') {
+      // 测试环境使用WSS
+      base = 'wss://szrs.shikongai.com:7001/api/ws';
+    } else if (environment === 'prod') {
+      // 生产环境使用WSS
+      base = 'wss://szrs.shikongai.com:7001/api/ws';
+    } else {
+      // 默认情况下，始终使用WSS
+      base = 'wss://szrs.shikongai.com:7001/api/ws';
+    }
 
-    return token ? `${base}?token=${token}` : base;
+    const url = token ? `${base}?token=${token}` : base;
+    console.log('Built WebSocket URL:', url);
+    return url;
   }
 
   public connect(): void {
-    // 先解析 URL 参数并初始化 userId/openWords
-    const url = this.buildUrl();
+    // 如果正在连接中，则不重复连接
+    if (this.isConnecting) {
+      return;
+    }
 
     // 如果已经有连接，则不重复连接
     if (
@@ -60,36 +97,83 @@ class WebSocketService {
       return;
     }
 
-    this.socket = new WebSocket(url);
+    this.isConnecting = true;
+    const url = this.buildUrl();
 
-    this.socket.onopen = () => {
-      console.log('WebSocket connected');
-      this.sendStartInterview();
-      this.startHeartbeat();
-    };
+    try {
+      this.socket = new WebSocket(url);
 
-    this.socket.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        this.emitEvent('message', data);
-      } catch (error) {
-        console.error('Failed to parse WebSocket message:', error);
+      this.socket.onopen = () => {
+        console.log('WebSocket connected successfully');
+        this.isConnecting = false;
+        this.reconnectAttempts = 0; // 重置重连计数
+        this.emitEvent('connect', { status: 'connected' }); // 触发连接成功事件
+        this.sendStartInterview();
+        this.startHeartbeat();
+      };
+
+      this.socket.onmessage = (event) => {
+        try {
+          console.log('Received WebSocket message:', event.data);
+          // 如果是心跳响应"pong"，则不尝试解析为JSON
+          if (event.data === 'pong') {
+            console.log('Received heartbeat response');
+            return;
+          }
+          const data = JSON.parse(event.data);
+          this.emitEvent('message', data);
+        } catch (error) {
+          console.error('Failed to parse WebSocket message:', error);
+        }
+      };
+
+      this.socket.onclose = (event) => {
+        console.log('WebSocket disconnected', event);
+        this.isConnecting = false;
+        this.stopHeartbeat();
+        this.emitEvent('disconnect', event);
+        this.tryReconnect();
+      };
+
+      this.socket.onerror = (event) => {
+        console.error('WebSocket error', event);
+        this.isConnecting = false;
+        this.emitEvent('error', event);
+      };
+    } catch (error) {
+      console.error('Failed to create WebSocket connection:', error);
+      this.isConnecting = false;
+      this.tryReconnect();
+    }
+  }
+
+  private tryReconnect(): void {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      console.log(`WebSocket attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+      
+      // 清除之前的重连计时器
+      if (this.reconnectTimeoutId !== null) {
+        clearTimeout(this.reconnectTimeoutId);
       }
-    };
-
-    this.socket.onclose = (event) => {
-      console.log('WebSocket disconnected', event);
-      this.stopHeartbeat();
-      this.emitEvent('disconnect', event);
-    };
-
-    this.socket.onerror = (event) => {
-      console.error('WebSocket error', event);
-      this.emitEvent('error', event);
-    };
+      
+      this.reconnectTimeoutId = window.setTimeout(() => {
+        this.connect();
+      }, this.reconnectInterval);
+    } else {
+      console.error(`WebSocket failed to reconnect after ${this.maxReconnectAttempts} attempts`);
+    }
   }
 
   public disconnect(): void {
+    // 清除重连计时器
+    if (this.reconnectTimeoutId !== null) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+    
+    this.reconnectAttempts = 0;
+    
     if (this.socket) {
       this.socket.close();
       this.socket = null;
@@ -98,7 +182,7 @@ class WebSocketService {
   }
 
   /**
-   * 发送“开始访谈”消息
+   * 发送"开始访谈"消息
    */
   private sendStartInterview(): void {
     this.sendMessage({
@@ -142,14 +226,22 @@ class WebSocketService {
    */
   private sendMessage(msg: any): void {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-      this.socket.send(JSON.stringify(msg));
+      const messageStr = JSON.stringify(msg);
+      console.log('Sending WebSocket message:', messageStr);
+      this.socket.send(messageStr);
     } else {
       console.warn('WebSocket is not open. Unable to send message:', msg);
+      // 如果连接已关闭，尝试重新连接
+      if (!this.socket || this.socket.readyState === WebSocket.CLOSED) {
+        this.connect();
+      }
     }
   }
 
   // 心跳管理
   private startHeartbeat(): void {
+    this.stopHeartbeat(); // 先清除之前的心跳
+    
     this.heartbeatIntervalId = window.setInterval(() => {
       if (this.socket && this.socket.readyState === WebSocket.OPEN) {
         this.socket.send('ping');

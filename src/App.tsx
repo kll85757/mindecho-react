@@ -1,8 +1,9 @@
 // App.tsx
 import { useEffect, Suspense, lazy } from 'react'
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from 'react-router-dom'
 import service from './utils/request'
 import './styles/global.less'
+import WebSocketService from './utils/websocket'
 
 // 懒加载页面组件
 const Home = lazy(() => import('./pages/Home'))
@@ -31,16 +32,47 @@ async function guestLogin() {
   }
 }
 
+// WebSocket URL 辅助函数
+export function getWebSocketUrlParam(wsUrl: string): string {
+  return `wsUrl=${encodeURIComponent(wsUrl)}`
+}
+
+// 检查URL中是否有WebSocket连接参数
+function WebSocketHandler() {
+  const location = useLocation()
+  
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    const directWsUrl = params.get('wsUrl')
+    
+    if (directWsUrl) {
+      try {
+        const decodedUrl = decodeURIComponent(directWsUrl)
+        console.log('Setting WebSocket URL from App:', decodedUrl)
+        WebSocketService.setWebSocketUrl(decodedUrl)
+      } catch (e) {
+        console.error('Failed to decode WebSocket URL:', e)
+      }
+    }
+  }, [location])
+  
+  return null
+}
+
 export default function App() {
   useEffect(() => {
+    // 现在在Chat组件中处理登录，不再在App中调用
+    /*
     if (!hasLoggedIn) {
       hasLoggedIn = true
       guestLogin()
     }
+    */
   }, [])
 
   return (
     <BrowserRouter>
+      <WebSocketHandler />
       <Suspense
         fallback={
           <div className="flex-center" style={{ height: '100vh' }}>
